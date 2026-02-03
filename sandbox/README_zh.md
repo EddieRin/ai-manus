@@ -45,11 +45,15 @@ sandbox/
 ## 运行环境要求
 
 - Python 3.9+
-- Docker 20.10+
+- Docker 20.10+（可选：用于一键启动浏览器/VNC 等完整沙盒能力）
+- Supervisor（可选但推荐：本地非 Docker 运行时用于提供 `/tmp/supervisor.sock`，避免后端启动时连接失败）
 
 ## 安装配置
 
 ### 本地开发环境
+
+> 说明：当前代码在启动时会尝试通过 UNIX Socket `/tmp/supervisor.sock` 连接 `supervisord`（用于进程状态与超时管理）。
+> 如果你不使用 Docker，请按下方“使用 supervisord 启动（推荐）”运行；否则直接 `uvicorn ...` 可能启动失败。
 
 1. **创建虚拟环境**：
 ```bash
@@ -62,10 +66,70 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+> 使用 `uv`（可选替代）：
+```bash
+uv venv .venv
+source .venv/bin/activate
+uv pip install -r requirements.txt
+```
 
 3. **启动开发服务器**：
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
+```
+
+> 如果你不使用 Docker，请优先使用下方“使用 supervisord 启动（推荐）”。直接运行 `uvicorn` 时若缺少 `/tmp/supervisor.sock`，应用可能无法启动。
+
+### 使用 supervisord 启动（推荐：本地/WSL，无 Docker）
+
+1. **安装 Supervisor**（Ubuntu/WSL）：
+```bash
+sudo apt update && sudo apt install -y supervisor
+```
+
+2. **创建本地 supervisord 配置**（只启动 app，并创建 `/tmp/supervisor.sock`）：
+```bash
+# 在仓库根目录执行
+cd sandbox
+cat > supervisord.local.conf <<'EOF'
+[unix_http_server]
+file=/tmp/supervisor.sock
+chmod=0770
+
+[supervisord]
+nodaemon=true
+logfile=/dev/stdout
+logfile_maxbytes=0
+pidfile=/tmp/supervisord.pid
+
+[rpcinterface:supervisor]
+supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+[supervisorctl]
+serverurl=unix:///tmp/supervisor.sock
+
+[program:app]
+command=uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
+directory=%(here)s
+autostart=true
+autorestart=true
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
+EOF
+```
+
+3. **启动**（前台运行，保持该终端不退出）：
+```bash
+cd sandbox
+supervisord -n -c supervisord.local.conf
+```
+
+> 常用控制命令（在另一个终端执行）：
+```bash
+supervisorctl -c supervisord.local.conf status
+supervisorctl -c supervisord.local.conf restart app
 ```
 
 ### Docker部署
@@ -99,6 +163,33 @@ ORIGINS=http://localhost:3000,https://example.com
 SERVICE_TIMEOUT_MINUTES=60
 LOG_LEVEL=DEBUG
 ```
+
+## 运行测试（pytest）
+
+> 注意：测试用例会请求 `http://localhost:8080/api/v1/...`（见 `tests/conftest.py`），因此必须先启动沙盒服务并监听在 `8080`。
+
+1. **安装测试依赖**：
+```bash
+cd sandbox
+source .venv/bin/activate
+uv pip install -r tests/requirements.txt
+```
+
+2. **运行全部测试**：
+```bash
+cd sandbox
+source .venv/bin/activate
+pytest
+```
+
+> 仅运行文件 API 测试（推荐）：
+```bash
+cd sandbox
+source .venv/bin/activate
+pytest -m file_api
+```
+
+> 说明：`tests/test_api_file.py` 的下载用例会把响应内容落盘到 `resource/downloaded_test_file.txt`（便于调试）。
 
 ## API接口文档
 
