@@ -4,6 +4,7 @@ import os
 from unittest.mock import patch, mock_open
 from conftest import BASE_URL
 import logging
+from pathlib import Path
 
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,18 @@ def test_download_file_success(client, temp_test_file):
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/octet-stream"
     assert "attachment" in response.headers.get("content-disposition", "")
+
+    # Save downloaded content to disk (for debugging / validation)
+    out_path = Path("resource") / "downloaded_test_file.txt"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_bytes(response.content)
+    logger.info(f"Downloaded file saved to: {out_path.resolve()}")
+
+    # Validate on-disk content matches API read content
+    read_response = client.post(f"{BASE_URL}/api/v1/file/read", json={"file": temp_test_file})
+    assert read_response.status_code == 200
+    expected_content = (read_response.json().get("data") or {}).get("content", "")
+    assert out_path.read_text(encoding="utf-8") == expected_content
 
 
 @pytest.mark.file_api
